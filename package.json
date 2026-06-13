@@ -23,6 +23,6 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "lemura": "file:../lemura"
+    "lemura": "^1.7.0"
   }
 }
