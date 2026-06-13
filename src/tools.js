@@ -9,6 +9,7 @@ export class ToolRegistry {
       this.#readFile(),
       this.#writeFile(),
       this.#editFile(),
+      this.#moveFile(),
       this.#listDirectory(),
       this.#findFiles(),
       this.#grepSearch(),
@@ -546,6 +547,53 @@ export class ToolRegistry {
           return `Successfully updated ${path}. Replaced unique target block.`;
         } catch (err) {
           return `Error editing file: ${err.message}. Hint: Ensure the file "${path}" exists and is writable.`;
+        }
+      },
+    };
+  }
+
+  #moveFile() {
+    return {
+      name: 'move_file',
+      description: 'Move or rename a file or directory on the local file system.',
+      category: 'filesystem',
+      parameters: {
+        type: 'object',
+        properties: {
+          source: {
+            type: 'string',
+            description: 'The source path of the file or directory to move.',
+          },
+          destination: {
+            type: 'string',
+            description: 'The destination path where the file or directory should be moved.',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const source = args?.source || args?.src || args?.from;
+        const destination = args?.destination || args?.dest || args?.to;
+        if (!source) {
+          throw new Error("Missing 'source' parameter for move_file tool.");
+        }
+        if (!destination) {
+          throw new Error("Missing 'destination' parameter for move_file tool.");
+        }
+        const { rename, mkdir } = await import('node:fs/promises');
+        const { resolve, dirname } = await import('node:path');
+        const os = await import('node:os');
+        try {
+          const homedir = os.homedir();
+          const expandedSource = source.startsWith('~') ? source.replace('~', homedir) : source;
+          const expandedDest = destination.startsWith('~') ? destination.replace('~', homedir) : destination;
+          const fullSource = resolve(process.cwd(), expandedSource);
+          const fullDest = resolve(process.cwd(), expandedDest);
+          await mkdir(dirname(fullDest), { recursive: true });
+          await rename(fullSource, fullDest);
+          return `Successfully moved ${source} to ${destination}`;
+        } catch (err) {
+          return `Error moving file: ${err.message}. Hint: Verify the source path exists and destination is writable.`;
         }
       },
     };

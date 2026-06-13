@@ -52,6 +52,7 @@ export class Agent {
       skills,
       logger,
       toolFirewall,
+      alwaysAvailableCategories: ['system'],
       // Skills are progressive (strategy: 'progressive'): lemura injects the
       // catalog, registers load_skill, and resets per turn — no glue needed here.
       skillSelection: { persistence: 'per_turn' },
