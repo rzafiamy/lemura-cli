@@ -1,0 +1,28 @@
+{
+  "name": "lemura-cli",
+  "version": "1.0.0",
+  "description": "A simple but beautiful terminal AI agent built on lemura",
+  "type": "module",
+  "bin": {
+    "lemura-cli": "./bin/cli.js"
+  },
+  "main": "./src/agent.js",
+  "scripts": {
+    "start": "node bin/cli.js"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "lemura",
+    "llm"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "lemura": "^1.6.0"
+  }
+}
