@@ -5,7 +5,6 @@ description: Guides the agent to review and fix bugs in code snippets.
 inject: system_prompt
 priority: 10
 strategy: dynamic
-enabled: true
 tags: fix, bug, error, debug
 ---
 

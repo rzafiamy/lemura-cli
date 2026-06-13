@@ -37,16 +37,39 @@ export class SkillLoader {
       });
   }
 
+  // Builds a compact catalog of all skills (name + description) for the system
+  // prompt. The agent reads this to decide which skills to pull in via load_skill.
+  buildCatalog(skills = this.loadSkills()) {
+    if (!skills.length) return '';
+    const lines = skills
+      .filter((s) => s.strategy === 'dynamic')
+      .map((s) => `- ${s.name}: ${s.description}`);
+    if (!lines.length) return '';
+    return [
+      'You have access to specialized skills. Each provides focused guidance for a',
+      'particular kind of request. When a skill is relevant to the user\'s message,',
+      'call the load_skill tool with its name BEFORE answering — its full instructions',
+      'will then be injected for you to follow. Load only what is relevant; skip it for',
+      'small talk or unrelated questions.',
+      '',
+      'Available skills:',
+      ...lines,
+    ].join('\n');
+  }
+
   #parse(name, raw) {
     const { frontmatter, body } = this.#splitFrontmatter(raw);
+    // Dynamic skills are opt-in: the agent enables them at runtime via load_skill,
+    // so they default to disabled regardless of any `enabled` hint in frontmatter.
+    const strategy = frontmatter.strategy ?? 'dynamic';
     return {
       name,
       version: frontmatter.version ?? '1.0.0',
       description: frontmatter.description ?? name,
       inject: frontmatter.inject ?? 'system_prompt',
       priority: Number(frontmatter.priority ?? 50),
-      strategy: frontmatter.strategy ?? 'fixed',
-      ...(frontmatter.enabled !== undefined ? { enabled: frontmatter.enabled !== 'false' } : {}),
+      strategy,
+      ...(strategy === 'dynamic' ? { enabled: false } : {}),
       ...(frontmatter.tags ? { tags: String(frontmatter.tags).split(',').map((t) => t.trim()) } : {}),
       content: body.trim(),
     };
