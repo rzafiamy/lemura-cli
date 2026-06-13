@@ -4,6 +4,45 @@ const supportsColor = process.stdout.isTTY && process.env.NO_COLOR === undefined
 const wrap = (open, close) => (s) =>
   supportsColor ? `${ESC}${open}m${s}${ESC}${close}m` : `${s}`;
 
+// Closest standard 16-color resolver
+const standardRgb = (r, g, b) => {
+  if (r > 200 && g > 200 && b > 200) return c.white;
+  if (r < 100 && g < 100 && b < 100) return c.gray;
+  if (r > g && r > b) {
+    if (g > 100) return c.yellow;
+    return c.red;
+  }
+  if (g > r && g > b) return c.green;
+  if (b > r && b > g) {
+    if (r > 100) return c.magenta;
+    return c.cyan;
+  }
+  if (r === g && r > b) return c.yellow;
+  if (r === b && r > g) return c.magenta;
+  if (g === b && g > r) return c.cyan;
+  return c.white;
+};
+
+const standardBgRgb = (r, g, b) => (s) => {
+  if (!supportsColor) return s;
+  let bgCode = 40; // black
+  if (r > 200 && g > 200 && b > 200) bgCode = 47; // white
+  else if (r < 100 && g < 100 && b < 100) bgCode = 100; // gray
+  else if (r > g && r > b) {
+    if (g > 100) bgCode = 43; // yellow
+    else bgCode = 41; // red
+  }
+  else if (g > r && g > b) bgCode = 42; // green
+  else if (b > r && b > g) {
+    if (r > 100) bgCode = 45; // magenta
+    else bgCode = 46; // cyan
+  }
+  else if (r === g && r > b) bgCode = 43;
+  else if (r === b && r > g) bgCode = 45;
+  else if (g === b && g > r) bgCode = 46;
+  return `${ESC}${bgCode}m${s}${ESC}49m`;
+};
+
 const makeGradient = (text, colorStart, colorEnd) => {
   if (!supportsColor) return text;
   const chars = [...text];
@@ -15,7 +54,7 @@ const makeGradient = (text, colorStart, colorEnd) => {
     const r = Math.round(colorStart[0] + factor * (colorEnd[0] - colorStart[0]));
     const g = Math.round(colorStart[1] + factor * (colorEnd[1] - colorStart[1]));
     const b = Math.round(colorStart[2] + factor * (colorEnd[2] - colorStart[2]));
-    return `${ESC}38;2;${r};${g};${b}m${char}${ESC}39m`;
+    return standardRgb(r, g, b)(char);
   }).join('');
 };
 
@@ -33,8 +72,8 @@ export const c = {
   cyan: wrap(36, 39),
   white: wrap(37, 39),
   fg256: (n) => (s) => (supportsColor ? `${ESC}38;5;${n}m${s}${ESC}39m` : `${s}`),
-  rgb: (r, g, b) => (s) => (supportsColor ? `${ESC}38;2;${r};${g};${b}m${s}${ESC}39m` : `${s}`),
-  bgRgb: (r, g, b) => (s) => (supportsColor ? `${ESC}48;2;${r};${g};${b}m${s}${ESC}49m` : `${s}`),
+  rgb: (r, g, b) => (s) => standardRgb(r, g, b)(s),
+  bgRgb: (r, g, b) => standardBgRgb(r, g, b),
   gradient: (text, colorStart, colorEnd) => makeGradient(text, colorStart, colorEnd),
 };
 
@@ -495,5 +534,58 @@ export class UI {
         process.stdout.write('\r\x1b[K');
       },
     };
+  }
+
+  static async promptPermission(toolName, argsJson, existingRl) {
+    const readline = await import('node:readline');
+    let rl = existingRl;
+    let isTemp = false;
+
+    if (!rl) {
+      const { stdin: input, stdout: output } = process;
+      rl = readline.createInterface({ input, output });
+      isTemp = true;
+    }
+
+    let argsFormatted = '';
+    try {
+      const parsed = typeof argsJson === 'string' ? JSON.parse(argsJson) : argsJson;
+      argsFormatted = UI.renderCodeBlock(JSON.stringify(parsed, null, 2), 'json');
+    } catch {
+      argsFormatted = String(argsJson);
+    }
+
+    const titleText = c.bold(c.bgRgb(220, 38, 38)(c.white(' 🛡️  FIREWALL SECURITY GATING ')));
+    process.stdout.write('\n  ' + titleText + '\n');
+    process.stdout.write('  ' + c.dim('The agent is requesting permission to execute:') + '\n\n');
+    process.stdout.write('  ' + c.bold(c.yellow('⚙ ' + toolName)) + '\n');
+    process.stdout.write('  ' + c.dim('Arguments:') + '\n');
+
+    const indentedArgs = argsFormatted.split('\n').map(l => '  ' + l).join('\n');
+    process.stdout.write(indentedArgs + '\n\n');
+
+    return new Promise((resolve) => {
+      const promptStr = '  ' + c.cyan('Allow this action? ') +
+        c.dim('[y]es / [n]o / [a]lways / [d]eny all') + c.cyan(' › ');
+      rl.question(promptStr, (answer) => {
+        if (isTemp) {
+          rl.close();
+        }
+        const clean = answer.trim().toLowerCase();
+        if (clean === 'y' || clean === 'yes') {
+          process.stdout.write('  ' + c.green('✔ Permission granted.') + '\n\n');
+          resolve(true);
+        } else if (clean === 'a' || clean === 'always') {
+          process.stdout.write('  ' + c.bold(c.green('✔ Always allow session permission granted.')) + '\n\n');
+          resolve('always');
+        } else if (clean === 'd' || clean === 'deny') {
+          process.stdout.write('  ' + c.bold(c.red('✖ Always deny session permission applied.')) + '\n\n');
+          resolve('deny_all');
+        } else {
+          process.stdout.write('  ' + c.red('✖ Permission denied.') + '\n\n');
+          resolve(false);
+        }
+      });
+    });
   }
 }

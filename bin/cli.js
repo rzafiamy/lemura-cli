@@ -18,10 +18,23 @@ class CLI {
 
   constructor(verbose = false) {
     this.#verbose = verbose;
+    this.sessionPermission = null; // 'always' | 'deny_all' | null
   }
 
   setAgent(agent) {
     this.#agent = agent;
+  }
+
+  pauseSpinner() {
+    if (this.#spin) this.#spin.stop();
+  }
+
+  resumeSpinner() {
+    if (this.#spin) this.#spin.start();
+  }
+
+  getRl() {
+    return this.#rl;
   }
 
   // Receives all trace events from lemura — both at session init and per turn.
@@ -246,7 +259,33 @@ const cli = new CLI(verbose);
 
 let agent;
 try {
-  agent = new Agent({ verbose, onTrace: (e) => cli.handleTrace(e) });
+  agent = new Agent({
+    verbose,
+    onTrace: (e) => cli.handleTrace(e),
+    onAsk: async (toolName, argsJson) => {
+      if (cli.sessionPermission === 'always') return 'accept';
+      if (cli.sessionPermission === 'deny_all') return 'deny';
+
+      cli.pauseSpinner();
+      const rl = cli.getRl();
+      if (rl) rl.resume();
+
+      const decision = await UI.promptPermission(toolName, argsJson, rl);
+
+      if (rl) rl.pause();
+      cli.resumeSpinner();
+
+      if (decision === 'always') {
+        cli.sessionPermission = 'always';
+        return 'accept';
+      }
+      if (decision === 'deny_all') {
+        cli.sessionPermission = 'deny_all';
+        return 'deny';
+      }
+      return decision ? 'accept' : 'deny';
+    }
+  });
 } catch (err) {
   process.stderr.write('\n' + c.red('✖ ') + err.message + '\n\n');
   process.exit(1);

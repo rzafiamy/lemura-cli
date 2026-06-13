@@ -9,7 +9,7 @@ export class Agent {
   #model;
   #mcpServers;
 
-  constructor({ verbose = false, onTrace } = {}) {
+  constructor({ verbose = false, onTrace, onAsk } = {}) {
     const config = new Config().validate();
     this.#model = config.model;
     this.#mcpServers = new McpLoader().load();
@@ -29,17 +29,17 @@ export class Agent {
     const tools = new ToolRegistry().getAll();
     const hasMcp = this.#mcpServers.length > 0;
 
-    // Built-in tools are always whitelisted; MCP servers are trusted when configured.
-    // lemura auto-registers and auto-trusts load_skill for progressive skills.
+    // Allow get_current_time and calculate without asking; default to ask for everything else
     const toolFirewall = {
-      defaultDecision: hasMcp ? 'accept' : 'deny',
+      defaultDecision: 'ask',
       rules: [
         {
           name: '^(get_current_time|calculate)$',
           decision: 'accept',
-          reason: 'Built-in safe utility tool.',
+          reason: 'Built-in safe utility tools.',
         },
       ],
+      ...(onAsk ? { onAsk } : {}),
     };
 
     this.#session = new SessionManager({
