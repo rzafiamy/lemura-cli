@@ -1,96 +1,8 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import readline from 'node:readline';
-import { createAgent } from '../src/agent.js';
-import { c, printBanner, label, spinner, rule } from '../src/ui.js';
-
-const args = process.argv.slice(2);
-const verbose = args.includes('--verbose') || args.includes('-v');
-
-// Allow a one-shot question: `lemura-cli "what time is it?"`
-const oneShot = args.filter((a) => !a.startsWith('-')).join(' ').trim();
-
-function fail(msg) {
-  process.stderr.write('\n' + c.red('✖ ') + msg + '\n\n');
-  process.exit(1);
-}
-
-let agent;
-try {
-  agent = createAgent({ verbose });
-} catch (err) {
-  fail(err.message);
-}
-const { session, model, mcpServers } = agent;
-
-// MCP servers connect asynchronously inside the SessionManager; both run() and
-// stream() await readiness internally, but we await here too so the banner can
-// report connected servers and tool counts up front.
-async function waitForMcp() {
-  if (!mcpServers.length) return;
-  const spin = spinner(`connecting ${mcpServers.length} MCP server(s)`);
-  spin.start();
-  try {
-    if (session.mcpReady) await session.mcpReady;
-  } catch {
-    /* per-server failures are logged by lemura; keep going */
-  }
-  spin.stop();
-}
-
-function mcpSummary() {
-  if (!mcpServers.length) return c.dim('  MCP: ') + c.dim('none configured') + '\n';
-  const all = session.tools?.getAll?.() ?? [];
-  const builtIns = new Set(['get_current_time', 'calculate']);
-  const mcpToolCount = all.filter((t) => !builtIns.has(t.name)).length;
-  const names = mcpServers.map((s) => s.name).join(', ');
-  return (
-    c.dim('  MCP: ') +
-    c.white(`${mcpServers.length} server(s)`) +
-    c.dim(` [${names}] · `) +
-    c.white(`${mcpToolCount} tool(s)`) +
-    '\n'
-  );
-}
-
-// Run the agent and render the final answer. The whole ReAct loop (tools, goal
-// verification) completes first; we show a spinner during the wait, then print
-// the answer in one clean block.
-async function ask(question) {
-  const spin = spinner('thinking');
-  spin.start();
-  let answer;
-  try {
-    answer = await session.run(question);
-  } catch (err) {
-    spin.stop();
-    process.stdout.write(c.red('✖ ') + (err?.message || String(err)) + '\n');
-    if (verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
-    return;
-  }
-  spin.stop();
-  const text = (answer ?? '').trim();
-  process.stdout.write(label.agent() + '  ' + (text || c.dim('(no response)')) + '\n');
-}
-
-// --- one-shot mode -----------------------------------------------------------
-if (oneShot) {
-  await waitForMcp();
-  await ask(oneShot);
-  await session.close();
-  process.exit(0);
-}
-
-// --- interactive REPL --------------------------------------------------------
-printBanner({ model });
-await waitForMcp();
-process.stdout.write(mcpSummary() + '\n');
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: label.you() + c.dim(' › '),
-});
+import { Agent } from '../src/agent.js';
+import { UI, c } from '../src/ui.js';
 
 const HELP = `
 ${c.bold('Commands')}
@@ -102,77 +14,169 @@ ${c.bold('Commands')}
   ${c.yellow('/exit')}     quit (or Ctrl+C)
 `;
 
-function listTools() {
-  const all = session.tools?.getAll?.() ?? [];
-  if (!all.length) return c.dim('  no tools registered') + '\n';
-  return (
-    all
-      .map((t) => '  ' + c.cyan(t.name) + c.dim(' — ' + (t.description || '').split('\n')[0]))
-      .join('\n') + '\n'
-  );
-}
+class CLI {
+  #agent;
+  #rl;
+  #busy = false;
 
-// Serialize turns: readline can fire 'line' again before an async handler
-// resolves (especially with paste / piped input). Pausing input while the
-// agent works guarantees one question is fully answered before the next.
-let busy = false;
+  constructor(agent) {
+    this.#agent = agent;
+  }
 
-async function handleLine(line) {
-  const input = line.trim();
-  if (!input) return rl.prompt();
+  #fail(msg) {
+    process.stderr.write('\n' + c.red('✖ ') + msg + '\n\n');
+    process.exit(1);
+  }
 
-  if (input.startsWith('/')) {
+  async #ask(question, verbose) {
+    const spin = UI.spinner('thinking');
+    spin.start();
+    let answer;
+    try {
+      answer = await this.#agent.ask(question);
+    } catch (err) {
+      spin.stop();
+      process.stdout.write(c.red('✖ ') + (err?.message || String(err)) + '\n');
+      if (verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
+      return;
+    }
+    spin.stop();
+    const text = (answer ?? '').trim();
+    process.stdout.write(UI.label.agent() + '  ' + (text || c.dim('(no response)')) + '\n');
+  }
+
+  #mcpSummary() {
+    const servers = this.#agent.mcpServers;
+    if (!servers.length) return c.dim('  MCP: ') + c.dim('none configured') + '\n';
+
+    const builtIns = new Set(['get_current_time', 'calculate']);
+    const mcpToolCount = this.#agent.getAllTools().filter((t) => !builtIns.has(t.name)).length;
+    const names = servers.map((s) => s.name).join(', ');
+    return (
+      c.dim('  MCP: ') +
+      c.white(`${servers.length} server(s)`) +
+      c.dim(` [${names}] · `) +
+      c.white(`${mcpToolCount} tool(s)`) +
+      '\n'
+    );
+  }
+
+  #listTools() {
+    const all = this.#agent.getAllTools();
+    if (!all.length) return c.dim('  no tools registered') + '\n';
+    return (
+      all
+        .map((t) => '  ' + c.cyan(t.name) + c.dim(' — ' + (t.description || '').split('\n')[0]))
+        .join('\n') + '\n'
+    );
+  }
+
+  async #handleCommand(input) {
     switch (input.toLowerCase()) {
       case '/exit':
       case '/quit':
-        return rl.close();
+        return this.#rl.close();
       case '/help':
         process.stdout.write(HELP + '\n');
-        return rl.prompt();
+        break;
       case '/clear':
         process.stdout.write('\x1b[2J\x1b[H');
-        printBanner({ model });
-        return rl.prompt();
+        UI.printBanner({ model: this.#agent.model });
+        break;
       case '/model':
-        process.stdout.write(c.dim('  active model: ') + c.white(model) + '\n\n');
-        return rl.prompt();
+        process.stdout.write(c.dim('  active model: ') + c.white(this.#agent.model) + '\n\n');
+        break;
       case '/mcp':
-        process.stdout.write(mcpSummary() + '\n');
-        return rl.prompt();
+        process.stdout.write(this.#mcpSummary() + '\n');
+        break;
       case '/tools':
-        process.stdout.write(listTools() + '\n');
-        return rl.prompt();
+        process.stdout.write(this.#listTools() + '\n');
+        break;
       default:
         process.stdout.write(
           c.red('  unknown command: ') + input + c.dim('  (try /help)') + '\n\n'
         );
-        return rl.prompt();
     }
+    this.#rl.prompt();
   }
 
-  busy = true;
-  rl.pause();
-  process.stdout.write('\n');
-  await ask(input);
-  process.stdout.write(rule() + '\n');
-  busy = false;
-  rl.resume();
-  rl.prompt();
+  async #handleLine(line, verbose) {
+    const input = line.trim();
+    if (!input) return this.#rl.prompt();
+
+    if (input.startsWith('/')) {
+      return this.#handleCommand(input);
+    }
+
+    this.#busy = true;
+    this.#rl.pause();
+    process.stdout.write('\n');
+    await this.#ask(input, verbose);
+    process.stdout.write(UI.rule() + '\n');
+    this.#busy = false;
+    this.#rl.resume();
+    this.#rl.prompt();
+  }
+
+  async runOneShot(question, verbose) {
+    await this.#waitForMcp();
+    await this.#ask(question, verbose);
+    await this.#agent.close();
+    process.exit(0);
+  }
+
+  async #waitForMcp() {
+    const servers = this.#agent.mcpServers;
+    if (!servers.length) return;
+    const spin = UI.spinner(`connecting ${servers.length} MCP server(s)`);
+    spin.start();
+    await this.#agent.waitForMcp();
+    spin.stop();
+  }
+
+  async runRepl(verbose) {
+    UI.printBanner({ model: this.#agent.model });
+    await this.#waitForMcp();
+    process.stdout.write(this.#mcpSummary() + '\n');
+
+    this.#rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: UI.label.you() + c.dim(' › '),
+    });
+
+    this.#rl.prompt();
+
+    this.#rl.on('line', (line) => {
+      if (this.#busy) return;
+      this.#handleLine(line, verbose);
+    });
+
+    this.#rl.on('close', async () => {
+      process.stdout.write('\n' + c.magenta('Goodbye! ') + c.dim('✦') + '\n');
+      await this.#agent.close();
+      process.exit(0);
+    });
+  }
 }
 
-rl.prompt();
+// --- bootstrap ---------------------------------------------------------------
+const args = process.argv.slice(2);
+const verbose = args.includes('--verbose') || args.includes('-v');
+const oneShot = args.filter((a) => !a.startsWith('-')).join(' ').trim();
 
-rl.on('line', (line) => {
-  if (busy) return; // ignore stray input while the agent is working
-  handleLine(line);
-});
+let agent;
+try {
+  agent = new Agent({ verbose });
+} catch (err) {
+  process.stderr.write('\n' + c.red('✖ ') + err.message + '\n\n');
+  process.exit(1);
+}
 
-rl.on('close', async () => {
-  process.stdout.write('\n' + c.magenta('Goodbye! ') + c.dim('✦') + '\n');
-  try {
-    await session.close();
-  } catch {
-    /* ignore disconnect errors on shutdown */
-  }
-  process.exit(0);
-});
+const cli = new CLI(agent);
+
+if (oneShot) {
+  await cli.runOneShot(oneShot, verbose);
+} else {
+  await cli.runRepl(verbose);
+}

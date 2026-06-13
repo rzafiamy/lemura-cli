@@ -1,6 +1,7 @@
 import { SessionManager, OpenAICompatibleAdapter, DefaultLogger, LogLevel } from 'lemura';
-import { tools } from './tools.js';
-import { loadMcpServers } from './mcp.js';
+import { Config } from './config.js';
+import { McpLoader } from './mcp.js';
+import { ToolRegistry } from './tools.js';
 
 const SYSTEM_PROMPT = `You are Lemura, a concise and friendly terminal assistant.
 - Answer in clean Markdown-light plain text suited to a terminal.
@@ -8,59 +9,87 @@ const SYSTEM_PROMPT = `You are Lemura, a concise and friendly terminal assistant
 - Use the available tools instead of guessing facts they can answer.
 - Keep responses tight; avoid filler and apologies.`;
 
-/**
- * Build a configured lemura SessionManager.
- * Reads provider settings from the environment (see .env.example) and MCP
- * servers from ./mcp.json (see mcp.example.json).
- */
-export function createAgent({ verbose = false } = {}) {
-  const apiKey = process.env.LEMURA_API_KEY || process.env.OPENAI_API_KEY || '';
-  const baseUrl =
-    process.env.LEMURA_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-  const model = process.env.LEMURA_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+export class Agent {
+  #session;
+  #model;
+  #mcpServers;
 
-  if (!apiKey) {
-    throw new Error(
-      'No API key found. Set LEMURA_API_KEY (or OPENAI_API_KEY) in your environment or .env file.'
-    );
+  constructor({ verbose = false } = {}) {
+    const config = new Config().validate();
+    this.#model = config.model;
+    this.#mcpServers = new McpLoader().load();
+
+    const adapter = new OpenAICompatibleAdapter({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      defaultModel: config.model,
+    });
+
+    const logger = new DefaultLogger();
+    logger.setLevel(verbose ? LogLevel.DEBUG : LogLevel.WARN);
+
+    const tools = new ToolRegistry().getAll();
+    const hasMcp = this.#mcpServers.length > 0;
+
+    // Built-in tools are always whitelisted; MCP servers are trusted when configured.
+    const toolFirewall = {
+      defaultDecision: hasMcp ? 'accept' : 'deny',
+      rules: [
+        {
+          name: '^(get_current_time|calculate)$',
+          decision: 'accept',
+          reason: 'Built-in safe utility tool.',
+        },
+      ],
+    };
+
+    this.#session = new SessionManager({
+      adapter,
+      model: config.model,
+      maxTokens: 100000,
+      maxIterations: 8,
+      systemPrompt: SYSTEM_PROMPT,
+      tools,
+      logger,
+      toolFirewall,
+      ...(hasMcp ? { mcpServers: this.#mcpServers } : {}),
+    });
   }
 
-  const adapter = new OpenAICompatibleAdapter({ baseUrl, apiKey, defaultModel: model });
+  get model() {
+    return this.#model;
+  }
 
-  const logger = new DefaultLogger();
-  logger.setLevel(verbose ? LogLevel.DEBUG : LogLevel.WARN);
+  get mcpServers() {
+    return this.#mcpServers;
+  }
 
-  const mcpServers = loadMcpServers();
-  const hasMcp = mcpServers.length > 0;
+  get session() {
+    return this.#session;
+  }
 
-  // Firewall trust model:
-  //   - built-in tools (time, calculator) are always whitelisted explicitly.
-  //   - when MCP servers are configured they are considered trusted, so the
-  //     default decision becomes 'accept' (MCP tool names aren't known until
-  //     after async connection, and namespacing isn't applied by lemura).
-  //   - with no MCP servers, the default stays 'deny' for a tight surface.
-  const toolFirewall = {
-    defaultDecision: hasMcp ? 'accept' : 'deny',
-    rules: [
-      {
-        name: '^(get_current_time|calculate)$',
-        decision: 'accept',
-        reason: 'Built-in safe utility tool.',
-      },
-    ],
-  };
+  async waitForMcp() {
+    if (!this.#mcpServers.length) return;
+    try {
+      if (this.#session.mcpReady) await this.#session.mcpReady;
+    } catch {
+      /* per-server failures are logged by lemura; keep going */
+    }
+  }
 
-  const session = new SessionManager({
-    adapter,
-    model,
-    maxTokens: 100000,
-    maxIterations: 8,
-    systemPrompt: SYSTEM_PROMPT,
-    tools,
-    logger,
-    toolFirewall,
-    ...(hasMcp ? { mcpServers } : {}),
-  });
+  async ask(question) {
+    return this.#session.run(question);
+  }
 
-  return { session, model, mcpServers };
+  async close() {
+    try {
+      await this.#session.close();
+    } catch {
+      /* ignore disconnect errors on shutdown */
+    }
+  }
+
+  getAllTools() {
+    return this.#session.tools?.getAll?.() ?? [];
+  }
 }
