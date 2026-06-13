@@ -120,6 +120,32 @@ function highlightPython(code) {
   currentCode = currentCode.replace(/___COMMENT_(\d+)___/g, (_, idx) => comments[parseInt(idx)]);
 
   return currentCode;
+}const stripAnsi = (str) => str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+
+function wrapText(text, maxLength) {
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    if (word === '') {
+      currentLine += ' ';
+      continue;
+    }
+    const cleanWord = word;
+    const currentLineStripped = stripAnsi(currentLine);
+    const wordStripped = stripAnsi(cleanWord);
+    const lineLen = currentLineStripped.length + (currentLineStripped ? 1 : 0) + wordStripped.length;
+    
+    if (lineLen > maxLength) {
+      if (currentLine) lines.push(currentLine);
+      currentLine = cleanWord;
+    } else {
+      currentLine = currentLine ? currentLine + ' ' + cleanWord : cleanWord;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
 }
 
 export class UI {
@@ -202,7 +228,7 @@ export class UI {
   static renderCodeBlock(code, lang) {
     const lines = code.split('\n');
     const termWidth = process.stdout.columns || 80;
-    const width = Math.min(termWidth - 4, 76);
+    const width = Math.min(termWidth - 12, 70); // leave margin room
     
     const title = lang ? ` ${lang.toLowerCase()} ` : ' code ';
     const topBorder = c.dim('┌──') + c.rgb(56, 189, 248)(c.bold(title)) + c.dim('─'.repeat(Math.max(2, width - title.length - 3)));
@@ -276,7 +302,8 @@ export class UI {
     const bottom = '└' + colWidths.map(w => '─'.repeat(w + 2)).join('┴') + '┘';
     out.push(c.dim(bottom));
 
-    return out.map(line => '  ' + line).join('\n');
+    const leftMargin = '    ';
+    return out.map(line => leftMargin + line).join('\n');
   }
 
   static renderMarkdown(text) {
@@ -287,6 +314,10 @@ export class UI {
     let codeLines = [];
     let inTable = false;
     let tableLines = [];
+
+    const leftMargin = '    '; // 4 spaces left margin
+    const termWidth = process.stdout.columns || 80;
+    const maxContentWidth = Math.min(termWidth - 8, 72); // cap width for readability and margins
 
     const flushTable = () => {
       if (tableLines.length > 0) {
@@ -308,7 +339,7 @@ export class UI {
         } else {
           const codeBlock = codeLines.join('\n');
           const rendered = UI.renderCodeBlock(codeBlock, codeLang);
-          const indentedCodeBlock = rendered.split('\n').map(l => '  ' + l).join('\n');
+          const indentedCodeBlock = rendered.split('\n').map(l => leftMargin + l).join('\n');
           out.push(indentedCodeBlock);
           inCode = false;
           codeLang = '';
@@ -339,22 +370,26 @@ export class UI {
       const h2 = line.match(/^## (.+)/);
       const h1 = line.match(/^# (.+)/);
       if (h1) {
-        out.push('\n  ' + c.bold(makeGradient('▲ ' + h1[1], [168, 85, 247], [56, 189, 248])));
+        out.push('\n' + leftMargin + c.bold(makeGradient('▲ ' + h1[1], [168, 85, 247], [56, 189, 248])));
         continue;
       }
       if (h2) {
-        out.push('\n  ' + c.bold(c.rgb(56, 189, 248)('◆ ' + h2[1])));
+        out.push('\n' + leftMargin + c.bold(c.rgb(56, 189, 248)('◆ ' + h2[1])));
         continue;
       }
       if (h3) {
-        out.push('\n  ' + c.bold(c.white('◇ ' + h3[1])));
+        out.push('\n' + leftMargin + c.bold(c.white('◇ ' + h3[1])));
         continue;
       }
 
       const quote = line.match(/^>\s*(.*)/);
       if (quote) {
         const content = UI.#inlineStyles(quote[1]);
-        out.push('  ' + c.dim('│  ') + c.italic(c.rgb(209, 213, 219)(content)));
+        const wrapWidth = maxContentWidth - 3;
+        const wrappedLines = wrapText(content, wrapWidth);
+        for (const wl of wrappedLines) {
+          out.push(leftMargin + c.dim('│  ') + c.italic(c.rgb(209, 213, 219)(wl)));
+        }
         continue;
       }
 
@@ -362,24 +397,43 @@ export class UI {
       if (bullet) {
         const indent = bullet[1];
         const content = UI.#inlineStyles(bullet[2]);
-        out.push(`  ${indent}${c.rgb(168, 85, 247)('✦')} ${content}`);
+        const bulletPrefix = leftMargin + indent + c.rgb(168, 85, 247)('✦') + ' ';
+        const wrapWidth = maxContentWidth - indent.length - 2;
+        const wrappedLines = wrapText(content, wrapWidth);
+        
+        out.push(bulletPrefix + wrappedLines[0]);
+        for (let i = 1; i < wrappedLines.length; i++) {
+          out.push(leftMargin + indent + '  ' + wrappedLines[i]);
+        }
         continue;
       }
 
       const numbered = line.match(/^(\s*)(\d+)\. (.+)/);
       if (numbered) {
         const indent = numbered[1];
+        const numStr = numbered[2] + '. ';
         const content = UI.#inlineStyles(numbered[3]);
-        out.push(`  ${indent}${c.rgb(56, 189, 248)(numbered[2] + '.')} ${content}`);
+        const numPrefix = leftMargin + indent + c.rgb(56, 189, 248)(numStr);
+        const wrapWidth = maxContentWidth - indent.length - numStr.length;
+        const wrappedLines = wrapText(content, wrapWidth);
+        
+        out.push(numPrefix + wrappedLines[0]);
+        for (let i = 1; i < wrappedLines.length; i++) {
+          out.push(leftMargin + indent + ' '.repeat(numStr.length) + wrappedLines[i]);
+        }
         continue;
       }
 
       if (/^[-*_]{3,}$/.test(line.trim())) {
-        out.push('\n  ' + UI.rule() + '\n');
+        out.push('\n' + leftMargin + UI.rule() + '\n');
         continue;
       }
 
-      out.push('  ' + UI.#inlineStyles(line));
+      const content = UI.#inlineStyles(line);
+      const wrappedLines = wrapText(content, maxContentWidth);
+      for (const wl of wrappedLines) {
+        out.push(leftMargin + wl);
+      }
     }
 
     flushTable();
@@ -417,7 +471,7 @@ export class UI {
       );
     }
     if (!parts.length) return;
-    process.stdout.write('\n  ' + parts.join(c.dim('  ·  ')) + '\n\n');
+    process.stdout.write('\n    ' + parts.join(c.dim('  ·  ')) + '\n\n');
   }
 
   static spinner(text = 'thinking') {
