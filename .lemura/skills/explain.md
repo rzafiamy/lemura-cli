@@ -4,7 +4,7 @@ version: 1.0.0
 description: Guides the agent to explain concepts or code clearly for developers.
 inject: system_prompt
 priority: 20
-strategy: dynamic
+strategy: progressive
 tags: explain, what, how, why, understand
 ---
 

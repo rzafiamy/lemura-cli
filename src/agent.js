@@ -8,7 +8,6 @@ export class Agent {
   #session;
   #model;
   #mcpServers;
-  #dynamicNames = new Set();
 
   constructor({ verbose = false, onTrace } = {}) {
     const config = new Config().validate();
@@ -25,58 +24,18 @@ export class Agent {
     logger.setLevel(verbose ? LogLevel.DEBUG : LogLevel.WARN);
 
     const skillLoader = new SkillLoader();
+    const systemPrompt = skillLoader.loadSystemPrompt();
     const skills = skillLoader.loadSkills();
-
-    // The agent sees a catalog of every skill's frontmatter and decides which to
-    // pull in via the load_skill tool. Append it to the base system prompt.
-    const catalog = skillLoader.buildCatalog(skills);
-    const systemPrompt = catalog
-      ? `${skillLoader.loadSystemPrompt()}\n\n${catalog}`
-      : skillLoader.loadSystemPrompt();
-
     const tools = new ToolRegistry().getAll();
-
-    // The decision layer: the agent calls this to pull a skill's full content into
-    // context. Enabling is deferred via #session so it binds the live injector.
-    const dynamicNames = new Set(
-      skills.filter((s) => s.strategy === 'dynamic').map((s) => s.name)
-    );
-    this.#dynamicNames = dynamicNames;
-    if (dynamicNames.size) {
-      tools.push({
-        name: 'load_skill',
-        description:
-          'Load a specialized skill by name to get its full instructions for the current turn. Call this when the user\'s request matches a skill listed in your system prompt.',
-        category: 'utility',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: {
-              type: 'string',
-              description: 'The skill name, exactly as listed in the available skills catalog.',
-              enum: [...dynamicNames],
-            },
-          },
-          required: ['name'],
-        },
-        execute: async ({ name } = {}) => {
-          if (!dynamicNames.has(name)) {
-            return `No skill named "${name}". Available: ${[...dynamicNames].join(', ')}.`;
-          }
-          this.#session.skills.enableSkill(name);
-          return `Skill "${name}" loaded. Follow its instructions for this response.`;
-        },
-      });
-    }
-
     const hasMcp = this.#mcpServers.length > 0;
 
     // Built-in tools are always whitelisted; MCP servers are trusted when configured.
+    // lemura auto-registers and auto-trusts load_skill for progressive skills.
     const toolFirewall = {
       defaultDecision: hasMcp ? 'accept' : 'deny',
       rules: [
         {
-          name: '^(get_current_time|calculate|load_skill)$',
+          name: '^(get_current_time|calculate)$',
           decision: 'accept',
           reason: 'Built-in safe utility tool.',
         },
@@ -93,6 +52,9 @@ export class Agent {
       skills,
       logger,
       toolFirewall,
+      // Skills are progressive (strategy: 'progressive'): lemura injects the
+      // catalog, registers load_skill, and resets per turn — no glue needed here.
+      skillSelection: { persistence: 'per_turn' },
       ...(onTrace ? { onTrace } : {}),
       ...(hasMcp ? { mcpServers: this.#mcpServers } : {}),
     });
@@ -120,11 +82,6 @@ export class Agent {
   }
 
   async ask(question) {
-    // Per-turn persistence: skills the agent loaded last turn are reset so each
-    // message starts from the catalog and re-loads only what it now needs.
-    for (const name of this.#dynamicNames) {
-      this.#session.skills.disableSkill(name);
-    }
     return this.#session.run(question);
   }
 

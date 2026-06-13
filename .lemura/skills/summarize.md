@@ -4,7 +4,7 @@ version: 1.0.0
 description: Guides the agent to summarize text or documents concisely.
 inject: system_prompt
 priority: 30
-strategy: dynamic
+strategy: progressive
 tags: summarize, summary, tldr, recap
 ---
 

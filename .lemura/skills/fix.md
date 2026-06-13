@@ -4,7 +4,7 @@ version: 1.0.0
 description: Guides the agent to review and fix bugs in code snippets.
 inject: system_prompt
 priority: 10
-strategy: dynamic
+strategy: progressive
 tags: fix, bug, error, debug
 ---
 
