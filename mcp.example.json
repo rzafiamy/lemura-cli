@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "everything",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"]
+    },
+
+    {
+      "_comment": "HTTP example — secrets pulled from env via ${VAR} expansion",
+      "name": "remote-tools",
+      "transport": "http",
+      "url": "http://localhost:3001",
+      "headers": { "Authorization": "Bearer ${MCP_REMOTE_TOKEN}" },
+      "timeoutMs": 30000
+    }
+  ]
+}

@@ -10,8 +10,9 @@ A simple but beautiful terminal AI agent, built on [lemura](https://www.npmjs.co
 \____/\___|_| |_| |_|\__,_|_|  \__,_|
 ```
 
-Streaming responses, a thinking spinner, a gradient banner, slash commands, and two
-built-in tools (time + calculator) that the agent calls through lemura's ReAct loop.
+A thinking spinner, a gradient banner, slash commands, two built-in tools
+(time + calculator), and **MCP support** — connect any Model Context Protocol
+server and its tools become available to the agent through lemura's ReAct loop.
 
 ## Setup
 
@@ -47,20 +48,90 @@ lemura-cli --verbose
 
 ### Commands
 
-| Command  | Action                |
-|----------|-----------------------|
-| `/help`  | show help             |
-| `/clear` | clear the screen      |
-| `/model` | show the active model |
-| `/exit`  | quit (or Ctrl+C)      |
+| Command   | Action                       |
+|-----------|------------------------------|
+| `/help`   | show help                    |
+| `/clear`  | clear the screen             |
+| `/model`  | show the active model        |
+| `/mcp`    | list connected MCP servers   |
+| `/tools`  | list all available tools     |
+| `/exit`   | quit (or Ctrl+C)             |
+
+## MCP servers
+
+Drop a `mcp.json` in the project root (copy `mcp.example.json`) and the agent
+connects to each server on startup, registering its tools alongside the built-in
+ones. Both stdio and HTTP/SSE transports are supported.
+
+```bash
+cp mcp.example.json mcp.json
+```
+
+```json
+{
+  "servers": [
+    {
+      "name": "everything",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"]
+    },
+    {
+      "name": "remote-tools",
+      "transport": "http",
+      "url": "http://localhost:3001",
+      "headers": { "Authorization": "Bearer ${MCP_REMOTE_TOKEN}" }
+    }
+  ]
+}
+```
+
+- Secrets use `${VAR}` expansion against your environment — keep tokens in `.env`, not in `mcp.json`.
+- Configured MCP servers are treated as **trusted**: their tools are auto-accepted by the tool firewall. Built-in tools are always whitelisted; with no MCP servers the firewall denies anything unexpected by default.
+- `mcp.json` is gitignored (it may contain endpoints/secrets).
+
+### Remote HTTPS MCP server
+
+For a hosted MCP server, use the `http` transport with an `https://` URL. Put the
+bearer token (or any auth header) in `.env` and reference it with `${VAR}` so the
+secret never lands in `mcp.json`:
+
+```jsonc
+// mcp.json
+{
+  "servers": [
+    {
+      "name": "remote-https",
+      "transport": "http",
+      "url": "https://mcp.example.com/v1",
+      "headers": {
+        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+      },
+      "timeoutMs": 30000
+    }
+  ]
+}
+```
+
+```ini
+# .env
+MCP_REMOTE_TOKEN=sk-your-remote-mcp-token
+```
+
+Notes:
+- `https://` works exactly like `http://` — TLS is handled by the URL scheme; no extra config.
+- Use `"transport": "sse"` instead if the server speaks Server-Sent Events rather than streamable HTTP.
+- `timeoutMs` is the per-call timeout (default `30000`); raise it for slow remote tools.
+- Add as many `headers` as the server needs (e.g. `"X-Api-Key": "${MCP_API_KEY}"`).
 
 ## How it works
 
 - [src/agent.js](src/agent.js) — wires a lemura `SessionManager` with an
-  `OpenAICompatibleAdapter`, system prompt, tools, and logger.
+  `OpenAICompatibleAdapter`, system prompt, tools, MCP servers, firewall, and logger.
 - [src/tools.js](src/tools.js) — `IToolDefinition` tools (current time, safe calculator).
-- [bin/cli.js](bin/cli.js) — the interactive REPL using `session.stream()` for
-  token-by-token output.
+- [src/mcp.js](src/mcp.js) — loads `mcp.json` and expands `${VAR}` secrets.
+- [bin/cli.js](bin/cli.js) — the interactive REPL; runs the agent via `session.run()`,
+  awaits MCP connection, and disconnects on exit.
 - [src/ui.js](src/ui.js) — zero-dependency ANSI styling, banner, and spinner.
 
 ## License
