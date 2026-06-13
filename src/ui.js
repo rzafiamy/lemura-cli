@@ -221,7 +221,7 @@ export class UI {
     }
     process.stdout.write(
       '  ' + c.dim('Command: ') + c.yellow('/help') + c.dim(' · ') +
-        c.yellow('/exit') + c.dim(' · ') + c.yellow('/clear') + '\n\n'
+        c.yellow('/new') + c.dim(' · ') + c.yellow('/clear') + c.dim(' · ') + c.yellow('/exit') + '\n\n'
     );
   }
 
@@ -255,6 +255,7 @@ export class UI {
     const HELP_LINES = [
       `${c.yellow('/help')}     ${c.dim('•')} Show this interactive help directory`,
       `${c.yellow('/clear')}    ${c.dim('•')} Clear terminal screen and reset layout`,
+      `${c.yellow('/new')}      ${c.dim('•')} Reset the agent session (start fresh)`,
       `${c.yellow('/model')}    ${c.dim('•')} Inspect the currently active LLM model`,
       `${c.yellow('/mcp')}      ${c.dim('•')} List connected MCP servers & status`,
       `${c.yellow('/tools')}    ${c.dim('•')} Catalog all registered tool endpoints`,

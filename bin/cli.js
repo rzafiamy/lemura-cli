@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 import readline from 'node:readline';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Agent } from '../src/agent.js';
 import { UI, c } from '../src/ui.js';
 
@@ -171,6 +173,12 @@ class CLI {
         UI.printBanner({ model: this.#agent.model });
         this.#printStatus();
         break;
+      case '/new':
+      case '/reset':
+        this.#agent.session.reset();
+        this.sessionPermission = null;
+        process.stdout.write('  ' + c.green('✔ Session reset. Starting a fresh conversation.') + '\n\n');
+        break;
       case '/model':
         process.stdout.write('  ' + c.cyan('🤖 Active Model:') + ' ' + c.white(this.#agent.model) + '\n\n');
         break;
@@ -191,9 +199,24 @@ class CLI {
     this.#rl.prompt();
   }
 
+  #saveHistory() {
+    try {
+      const historyPath = path.join(process.cwd(), '.lemura', 'history');
+      const dir = path.dirname(historyPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const hist = (this.#rl.history || []).slice(0, 1000);
+      const chronological = [...hist].reverse();
+      fs.writeFileSync(historyPath, chronological.join('\n'), 'utf8');
+    } catch {}
+  }
+
   async #handleLine(line) {
     const input = line.trim();
     if (!input) return this.#rl.prompt();
+
+    this.#saveHistory();
 
     if (input.startsWith('/')) {
       return this.#handleCommand(input);
@@ -240,11 +263,32 @@ class CLI {
     await this.#waitForMcp();
     this.#printStatus();
 
+    const historyPath = path.join(process.cwd(), '.lemura', 'history');
+    let loadedHistory = [];
+    try {
+      if (fs.existsSync(historyPath)) {
+        const content = fs.readFileSync(historyPath, 'utf8');
+        loadedHistory = content.split('\n').map(l => l.trim()).filter(Boolean);
+      }
+    } catch {}
+
     this.#rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       prompt: '  ' + UI.label.you() + c.dim(' › '),
+      completer: (line) => {
+        const completions = ['/help', '/clear', '/new', '/reset', '/model', '/mcp', '/tools', '/skills', '/exit', '/quit'];
+        if (line.startsWith('/')) {
+          const hits = completions.filter((c) => c.startsWith(line));
+          return [hits.length ? hits : completions, line];
+        }
+        return [[], line];
+      }
     });
+
+    if (loadedHistory.length > 0) {
+      this.#rl.history = loadedHistory.reverse();
+    }
 
     this.#rl.prompt();
 
