@@ -4,17 +4,6 @@ import readline from 'node:readline';
 import { Agent } from '../src/agent.js';
 import { UI, c } from '../src/ui.js';
 
-const HELP = `
-${c.bold('Commands')}
-  ${c.yellow('/help')}     show this help
-  ${c.yellow('/clear')}    clear the screen
-  ${c.yellow('/model')}    show the active model
-  ${c.yellow('/mcp')}      list connected MCP servers
-  ${c.yellow('/tools')}    list all available tools
-  ${c.yellow('/skills')}   list active skills
-  ${c.yellow('/exit')}     quit (or Ctrl+C)
-`;
-
 class CLI {
   #agent;
   #rl;
@@ -60,74 +49,100 @@ class CLI {
 
     this.#spin = UI.spinner('thinking');
     this.#spin.start();
+    const startTime = Date.now();
     let answer;
     try {
       answer = await this.#agent.ask(question);
     } catch (err) {
       this.#spin.stop();
       this.#spin = null;
-      process.stdout.write(c.red('✖ ') + (err?.message || String(err)) + '\n');
-      if (this.#verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
+      process.stdout.write('\n  ' + c.red('✖ Error: ') + c.white(err?.message || String(err)) + '\n');
+      if (this.#verbose && err?.stack) {
+        process.stdout.write('\n' + c.dim(err.stack.split('\n').map(l => '    ' + l).join('\n')) + '\n');
+      }
+      process.stdout.write('\n');
       return;
     }
     this.#spin.stop();
     this.#spin = null;
 
+    const duration = (Date.now() - startTime) / 1000;
     const raw = (answer ?? '').trim();
-    const text = raw ? UI.renderMarkdown(raw) : c.dim('(no response)');
-    process.stdout.write(UI.label.agent() + '  ' + text + '\n');
+    const text = raw ? UI.renderMarkdown(raw) : c.dim('  (no response)');
+    
+    process.stdout.write('\n' + UI.label.agent() + '\n' + text + '\n');
 
     UI.renderTurnStats({
       tools: this.#turnTools,
       skills: this.#turnSkills,
       tokens: this.#turnTokens,
+      duration,
     });
   }
 
   #mcpSummary() {
     const servers = this.#agent.mcpServers;
-    if (!servers.length) return c.dim('  MCP: ') + c.dim('none configured') + '\n';
+    if (!servers.length) {
+      return UI.panel('MCP SERVER STATUS', [
+        c.dim('No MCP servers configured — edit mcp.json to add servers.')
+      ]);
+    }
 
     const builtIns = new Set(['get_current_time', 'calculate']);
     const mcpToolCount = this.#agent.getAllTools().filter((t) => !builtIns.has(t.name)).length;
-    const names = servers.map((s) => s.name).join(', ');
-    return (
-      c.dim('  MCP: ') +
-      c.white(`${servers.length} server(s)`) +
-      c.dim(` [${names}] · `) +
-      c.white(`${mcpToolCount} tool(s)`) +
-      '\n'
+    
+    const lines = [];
+    lines.push(
+      c.green('● ') + c.white(`${servers.length} server(s) active`) + c.dim(` (exposing ${mcpToolCount} tools)`)
     );
+    lines.push('');
+    for (const server of servers) {
+      lines.push(
+        `  ${c.cyan('◆')} ${c.bold(server.name)} ${c.dim(`[${server.transport}]`)}`
+      );
+    }
+    return UI.panel('MCP SERVERS', lines);
   }
 
   #listTools() {
     const all = this.#agent.getAllTools();
-    if (!all.length) return c.dim('  no tools registered') + '\n';
-    return (
-      all
-        .map((t) => '  ' + c.cyan(t.name) + c.dim(' — ' + (t.description || '').split('\n')[0]))
-        .join('\n') + '\n'
-    );
+    if (!all.length) {
+      return UI.panel('REGISTERED TOOLS', [c.dim('No tools registered')]);
+    }
+    const lines = all.map(t => {
+      const desc = (t.description || '').split('\n')[0];
+      const descCut = desc.length > 42 ? desc.slice(0, 39) + '...' : desc;
+      return ` ${c.cyan('⚙ ' + t.name.padEnd(18))} ${c.dim('—')} ${c.white(descCut)}`;
+    });
+    return UI.panel('REGISTERED TOOLS', lines);
   }
 
-  #skillSummary() {
-    const all = this.#agent.getAllSkills();
-    if (!all.length) return '';
-    const names = all.map((s) => c.magenta(s.name)).join(c.dim(', '));
-    return c.dim('  skills: ') + names + '\n';
+  #printStatus() {
+    const servers = this.#agent.mcpServers;
+    const mcpText = servers.length 
+      ? c.green('● ') + c.white(`${servers.length} MCP server(s) active`) + c.dim(` [${servers.map(s => s.name).join(', ')}]`)
+      : c.dim('○ No MCP servers connected');
+      
+    const skills = this.#agent.getAllSkills();
+    const skillsText = skills.length
+      ? c.magenta('● ') + c.white(`${skills.length} skill(s) loaded`) + c.dim(` [${skills.map(s => s.name).join(', ')}]`)
+      : c.dim('○ No skills loaded');
+      
+    process.stdout.write('  ' + mcpText + '\n');
+    process.stdout.write('  ' + skillsText + '\n\n');
   }
 
   #listSkills() {
     const all = this.#agent.getAllSkills();
-    if (!all.length) return c.dim('  no skills loaded') + '\n';
-    return (
-      all
-        .map((s) => {
-          const tag = s.strategy === 'dynamic' ? c.dim(' [dynamic]') : c.dim(' [fixed]');
-          return '  ' + c.magenta(s.name) + tag + c.dim(' — ' + s.description);
-        })
-        .join('\n') + '\n'
-    );
+    if (!all.length) {
+      return UI.panel('LOADED SKILLS', [c.dim('No skills loaded')]);
+    }
+    const lines = all.map(s => {
+      const tag = s.strategy === 'dynamic' ? c.yellow('dynamic') : c.blue('fixed');
+      const desc = s.description.length > 42 ? s.description.slice(0, 39) + '...' : s.description;
+      return ` ${c.magenta('⌘ ' + s.name.padEnd(14))} ${c.dim(`[${tag}]`)} ${c.dim('—')} ${c.white(desc)}`;
+    });
+    return UI.panel('LOADED SKILLS', lines);
   }
 
   async #handleCommand(input) {
@@ -136,27 +151,28 @@ class CLI {
       case '/quit':
         return this.#rl.close();
       case '/help':
-        process.stdout.write(HELP + '\n');
+        process.stdout.write(UI.getHelpPanel() + '\n\n');
         break;
       case '/clear':
         process.stdout.write('\x1b[2J\x1b[H');
         UI.printBanner({ model: this.#agent.model });
+        this.#printStatus();
         break;
       case '/model':
-        process.stdout.write(c.dim('  active model: ') + c.white(this.#agent.model) + '\n\n');
+        process.stdout.write('  ' + c.cyan('🤖 Active Model:') + ' ' + c.white(this.#agent.model) + '\n\n');
         break;
       case '/mcp':
-        process.stdout.write(this.#mcpSummary() + '\n');
+        process.stdout.write(this.#mcpSummary() + '\n\n');
         break;
       case '/tools':
-        process.stdout.write(this.#listTools() + '\n');
+        process.stdout.write(this.#listTools() + '\n\n');
         break;
       case '/skills':
-        process.stdout.write(this.#listSkills() + '\n');
+        process.stdout.write(this.#listSkills() + '\n\n');
         break;
       default:
         process.stdout.write(
-          c.red('  unknown command: ') + input + c.dim('  (try /help)') + '\n\n'
+          '  ' + c.red('✖ Unknown command: ') + c.white(input) + c.dim(' (try /help)') + '\n\n'
         );
     }
     this.#rl.prompt();
@@ -172,9 +188,8 @@ class CLI {
 
     this.#busy = true;
     this.#rl.pause();
-    process.stdout.write('\n');
     await this.#ask(input);
-    process.stdout.write(UI.rule() + '\n');
+    process.stdout.write('  ' + UI.rule() + '\n\n');
     this.#busy = false;
     this.#rl.resume();
     this.#rl.prompt();
@@ -199,12 +214,12 @@ class CLI {
   async runRepl() {
     UI.printBanner({ model: this.#agent.model });
     await this.#waitForMcp();
-    process.stdout.write(this.#mcpSummary() + this.#skillSummary() + '\n');
+    this.#printStatus();
 
     this.#rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
-      prompt: UI.label.you() + c.dim(' › '),
+      prompt: '  ' + UI.label.you() + c.dim(' › '),
     });
 
     this.#rl.prompt();
@@ -215,7 +230,7 @@ class CLI {
     });
 
     this.#rl.on('close', async () => {
-      process.stdout.write('\n' + c.magenta('Goodbye! ') + c.dim('✦') + '\n');
+      process.stdout.write('\n  ' + c.gradient('Goodbye! ✦', [168, 85, 247], [56, 189, 248]) + '\n\n');
       await this.#agent.close();
       process.exit(0);
     });
