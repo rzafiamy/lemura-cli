@@ -217,6 +217,17 @@ class CLI {
     spin.stop();
   }
 
+  async cleanExit() {
+    this.pauseSpinner();
+    process.stdout.write('\n  ' + c.gradient('Goodbye! ✦', [168, 85, 247], [56, 189, 248]) + '\n\n');
+    if (this.#agent) {
+      try {
+        await this.#agent.close();
+      } catch {}
+    }
+    process.exit(0);
+  }
+
   async runOneShot(question) {
     await this.#waitForMcp();
     await this.#ask(question);
@@ -242,10 +253,12 @@ class CLI {
       this.#handleLine(line);
     });
 
-    this.#rl.on('close', async () => {
-      process.stdout.write('\n  ' + c.gradient('Goodbye! ✦', [168, 85, 247], [56, 189, 248]) + '\n\n');
-      await this.#agent.close();
-      process.exit(0);
+    this.#rl.on('SIGINT', () => {
+      this.cleanExit();
+    });
+
+    this.#rl.on('close', () => {
+      this.cleanExit();
     });
   }
 }
@@ -256,6 +269,10 @@ const verbose = args.includes('--verbose') || args.includes('-v');
 const oneShot = args.filter((a) => !a.startsWith('-')).join(' ').trim();
 
 const cli = new CLI(verbose);
+
+// Register process signal handlers for clean exit at any time
+process.on('SIGINT', () => cli.cleanExit());
+process.on('SIGTERM', () => cli.cleanExit());
 
 let agent;
 try {

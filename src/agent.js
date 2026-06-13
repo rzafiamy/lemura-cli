@@ -45,8 +45,8 @@ export class Agent {
     this.#session = new SessionManager({
       adapter,
       model: config.model,
-      maxTokens: 100000,
-      maxIterations: 8,
+      maxTokens: config.maxTokens,
+      maxIterations: config.maxIterations,
       systemPrompt,
       tools,
       skills,
@@ -55,6 +55,13 @@ export class Agent {
       // Skills are progressive (strategy: 'progressive'): lemura injects the
       // catalog, registers load_skill, and resets per turn — no glue needed here.
       skillSelection: { persistence: 'per_turn' },
+      ...(config.maxSteps !== undefined ? { maxSteps: config.maxSteps } : {}),
+      ...(config.maxCompletionTokens !== undefined ? { maxCompletionTokens: config.maxCompletionTokens } : {}),
+      ...(config.enableGoalPlanning !== undefined ? { enableGoalPlanning: config.enableGoalPlanning } : {}),
+      ...(config.enableGoalVerification !== undefined ? { enableGoalVerification: config.enableGoalVerification } : {}),
+      ...(config.enableContinuationPlanning !== undefined ? { enableContinuationPlanning: config.enableContinuationPlanning } : {}),
+      ...(config.parallelToolCalls !== undefined ? { parallelToolCalls: config.parallelToolCalls } : {}),
+      ...(config.enableRouting !== undefined ? { enableRouting: config.enableRouting } : {}),
       ...(onTrace ? { onTrace } : {}),
       ...(hasMcp ? { mcpServers: this.#mcpServers } : {}),
     });

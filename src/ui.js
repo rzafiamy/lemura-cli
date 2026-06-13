@@ -567,7 +567,18 @@ export class UI {
     return new Promise((resolve) => {
       const promptStr = '  ' + c.cyan('Allow this action? ') +
         c.dim('[y]es / [n]o / [a]lways / [d]eny all') + c.cyan(' › ');
+
+      const sigintHandler = () => {
+        if (isTemp) {
+          rl.close();
+        }
+        process.emit('SIGINT');
+      };
+
+      rl.on('SIGINT', sigintHandler);
+
       rl.question(promptStr, (answer) => {
+        rl.off('SIGINT', sigintHandler);
         if (isTemp) {
           rl.close();
         }
