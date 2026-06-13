@@ -2,12 +2,7 @@ import { SessionManager, OpenAICompatibleAdapter, DefaultLogger, LogLevel } from
 import { Config } from './config.js';
 import { McpLoader } from './mcp.js';
 import { ToolRegistry } from './tools.js';
-
-const SYSTEM_PROMPT = `You are Lemura, a concise and friendly terminal assistant.
-- Answer in clean Markdown-light plain text suited to a terminal.
-- Be direct: lead with the answer, then a short explanation only if useful.
-- Use the available tools instead of guessing facts they can answer.
-- Keep responses tight; avoid filler and apologies.`;
+import { SkillLoader } from './skills.js';
 
 export class Agent {
   #session;
@@ -28,6 +23,9 @@ export class Agent {
     const logger = new DefaultLogger();
     logger.setLevel(verbose ? LogLevel.DEBUG : LogLevel.WARN);
 
+    const skillLoader = new SkillLoader();
+    const systemPrompt = skillLoader.loadSystemPrompt();
+    const skills = skillLoader.loadSkills();
     const tools = new ToolRegistry().getAll();
     const hasMcp = this.#mcpServers.length > 0;
 
@@ -48,8 +46,9 @@ export class Agent {
       model: config.model,
       maxTokens: 100000,
       maxIterations: 8,
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt,
       tools,
+      skills,
       logger,
       toolFirewall,
       ...(hasMcp ? { mcpServers: this.#mcpServers } : {}),
@@ -91,5 +90,9 @@ export class Agent {
 
   getAllTools() {
     return this.#session.tools?.getAll?.() ?? [];
+  }
+
+  getAllSkills() {
+    return this.#session.skills?.getAll?.() ?? [];
   }
 }

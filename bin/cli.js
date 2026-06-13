@@ -11,6 +11,7 @@ ${c.bold('Commands')}
   ${c.yellow('/model')}    show the active model
   ${c.yellow('/mcp')}      list connected MCP servers
   ${c.yellow('/tools')}    list all available tools
+  ${c.yellow('/skills')}   list active skills
   ${c.yellow('/exit')}     quit (or Ctrl+C)
 `;
 
@@ -18,17 +19,14 @@ class CLI {
   #agent;
   #rl;
   #busy = false;
+  #verbose;
 
-  constructor(agent) {
+  constructor(agent, verbose = false) {
     this.#agent = agent;
+    this.#verbose = verbose;
   }
 
-  #fail(msg) {
-    process.stderr.write('\n' + c.red('✖ ') + msg + '\n\n');
-    process.exit(1);
-  }
-
-  async #ask(question, verbose) {
+  async #ask(question) {
     const spin = UI.spinner('thinking');
     spin.start();
     let answer;
@@ -37,7 +35,7 @@ class CLI {
     } catch (err) {
       spin.stop();
       process.stdout.write(c.red('✖ ') + (err?.message || String(err)) + '\n');
-      if (verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
+      if (this.#verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
       return;
     }
     spin.stop();
@@ -71,6 +69,19 @@ class CLI {
     );
   }
 
+  #listSkills() {
+    const all = this.#agent.getAllSkills();
+    if (!all.length) return c.dim('  no skills loaded') + '\n';
+    return (
+      all
+        .map((s) => {
+          const tag = s.strategy === 'dynamic' ? c.dim(' [dynamic]') : c.dim(' [fixed]');
+          return '  ' + c.yellow(s.name) + tag + c.dim(' — ' + s.description);
+        })
+        .join('\n') + '\n'
+    );
+  }
+
   async #handleCommand(input) {
     switch (input.toLowerCase()) {
       case '/exit':
@@ -92,6 +103,9 @@ class CLI {
       case '/tools':
         process.stdout.write(this.#listTools() + '\n');
         break;
+      case '/skills':
+        process.stdout.write(this.#listSkills() + '\n');
+        break;
       default:
         process.stdout.write(
           c.red('  unknown command: ') + input + c.dim('  (try /help)') + '\n\n'
@@ -100,7 +114,7 @@ class CLI {
     this.#rl.prompt();
   }
 
-  async #handleLine(line, verbose) {
+  async #handleLine(line) {
     const input = line.trim();
     if (!input) return this.#rl.prompt();
 
@@ -111,18 +125,11 @@ class CLI {
     this.#busy = true;
     this.#rl.pause();
     process.stdout.write('\n');
-    await this.#ask(input, verbose);
+    await this.#ask(input);
     process.stdout.write(UI.rule() + '\n');
     this.#busy = false;
     this.#rl.resume();
     this.#rl.prompt();
-  }
-
-  async runOneShot(question, verbose) {
-    await this.#waitForMcp();
-    await this.#ask(question, verbose);
-    await this.#agent.close();
-    process.exit(0);
   }
 
   async #waitForMcp() {
@@ -134,7 +141,14 @@ class CLI {
     spin.stop();
   }
 
-  async runRepl(verbose) {
+  async runOneShot(question) {
+    await this.#waitForMcp();
+    await this.#ask(question);
+    await this.#agent.close();
+    process.exit(0);
+  }
+
+  async runRepl() {
     UI.printBanner({ model: this.#agent.model });
     await this.#waitForMcp();
     process.stdout.write(this.#mcpSummary() + '\n');
@@ -149,7 +163,7 @@ class CLI {
 
     this.#rl.on('line', (line) => {
       if (this.#busy) return;
-      this.#handleLine(line, verbose);
+      this.#handleLine(line);
     });
 
     this.#rl.on('close', async () => {
@@ -173,10 +187,10 @@ try {
   process.exit(1);
 }
 
-const cli = new CLI(agent);
+const cli = new CLI(agent, verbose);
 
 if (oneShot) {
-  await cli.runOneShot(oneShot, verbose);
+  await cli.runOneShot(oneShot);
 } else {
-  await cli.runRepl(verbose);
+  await cli.runRepl();
 }
