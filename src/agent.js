@@ -9,7 +9,7 @@ export class Agent {
   #model;
   #mcpServers;
 
-  constructor({ verbose = false } = {}) {
+  constructor({ verbose = false, onTrace } = {}) {
     const config = new Config().validate();
     this.#model = config.model;
     this.#mcpServers = new McpLoader().load();
@@ -51,6 +51,7 @@ export class Agent {
       skills,
       logger,
       toolFirewall,
+      ...(onTrace ? { onTrace } : {}),
       ...(hasMcp ? { mcpServers: this.#mcpServers } : {}),
     });
   }

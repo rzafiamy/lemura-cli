@@ -5,6 +5,7 @@ description: Guides the agent to summarize text or documents concisely.
 inject: system_prompt
 priority: 30
 strategy: dynamic
+enabled: true
 tags: summarize, summary, tldr, recap
 ---
 

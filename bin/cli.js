@@ -20,27 +20,68 @@ class CLI {
   #rl;
   #busy = false;
   #verbose;
+  #spin = null;
 
-  constructor(agent, verbose = false) {
-    this.#agent = agent;
+  // Accumulated per turn, reset before each ask
+  #turnTools = [];
+  #turnSkills = [];
+  #turnTokens = null;
+
+  constructor(verbose = false) {
     this.#verbose = verbose;
   }
 
+  setAgent(agent) {
+    this.#agent = agent;
+  }
+
+  // Receives all trace events from lemura — both at session init and per turn.
+  handleTrace(event) {
+    const { type, name, status, metadata } = event;
+
+    // Per-turn events — only meaningful while a turn is running
+    if (type === 'tool_call' && status === 'running') {
+      if (!this.#turnTools.includes(name)) this.#turnTools.push(name);
+    }
+
+    if (type === 'skill' && name === 'skill_inject') {
+      this.#turnSkills = metadata?.skills ?? [];
+    }
+
+    if (type === 'thinking' && name === 'llm_call' && status === 'done') {
+      if (metadata?.usage) this.#turnTokens = metadata.usage;
+    }
+  }
+
   async #ask(question) {
-    const spin = UI.spinner('thinking');
-    spin.start();
+    this.#turnTools = [];
+    this.#turnSkills = [];
+    this.#turnTokens = null;
+
+    this.#spin = UI.spinner('thinking');
+    this.#spin.start();
     let answer;
     try {
       answer = await this.#agent.ask(question);
     } catch (err) {
-      spin.stop();
+      this.#spin.stop();
+      this.#spin = null;
       process.stdout.write(c.red('✖ ') + (err?.message || String(err)) + '\n');
       if (this.#verbose && err?.stack) process.stdout.write(c.dim(err.stack) + '\n');
       return;
     }
-    spin.stop();
-    const text = (answer ?? '').trim();
-    process.stdout.write(UI.label.agent() + '  ' + (text || c.dim('(no response)')) + '\n');
+    this.#spin.stop();
+    this.#spin = null;
+
+    const raw = (answer ?? '').trim();
+    const text = raw ? UI.renderMarkdown(raw) : c.dim('(no response)');
+    process.stdout.write(UI.label.agent() + '  ' + text + '\n');
+
+    UI.renderTurnStats({
+      tools: this.#turnTools,
+      skills: this.#turnSkills,
+      tokens: this.#turnTokens,
+    });
   }
 
   #mcpSummary() {
@@ -69,6 +110,13 @@ class CLI {
     );
   }
 
+  #skillSummary() {
+    const all = this.#agent.getAllSkills();
+    if (!all.length) return '';
+    const names = all.map((s) => c.magenta(s.name)).join(c.dim(', '));
+    return c.dim('  skills: ') + names + '\n';
+  }
+
   #listSkills() {
     const all = this.#agent.getAllSkills();
     if (!all.length) return c.dim('  no skills loaded') + '\n';
@@ -76,7 +124,7 @@ class CLI {
       all
         .map((s) => {
           const tag = s.strategy === 'dynamic' ? c.dim(' [dynamic]') : c.dim(' [fixed]');
-          return '  ' + c.yellow(s.name) + tag + c.dim(' — ' + s.description);
+          return '  ' + c.magenta(s.name) + tag + c.dim(' — ' + s.description);
         })
         .join('\n') + '\n'
     );
@@ -151,7 +199,7 @@ class CLI {
   async runRepl() {
     UI.printBanner({ model: this.#agent.model });
     await this.#waitForMcp();
-    process.stdout.write(this.#mcpSummary() + '\n');
+    process.stdout.write(this.#mcpSummary() + this.#skillSummary() + '\n');
 
     this.#rl = readline.createInterface({
       input: process.stdin,
@@ -179,15 +227,17 @@ const args = process.argv.slice(2);
 const verbose = args.includes('--verbose') || args.includes('-v');
 const oneShot = args.filter((a) => !a.startsWith('-')).join(' ').trim();
 
+const cli = new CLI(verbose);
+
 let agent;
 try {
-  agent = new Agent({ verbose });
+  agent = new Agent({ verbose, onTrace: (e) => cli.handleTrace(e) });
 } catch (err) {
   process.stderr.write('\n' + c.red('✖ ') + err.message + '\n\n');
   process.exit(1);
 }
 
-const cli = new CLI(agent, verbose);
+cli.setAgent(agent);
 
 if (oneShot) {
   await cli.runOneShot(oneShot);

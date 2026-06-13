@@ -46,6 +46,7 @@ export class SkillLoader {
       inject: frontmatter.inject ?? 'system_prompt',
       priority: Number(frontmatter.priority ?? 50),
       strategy: frontmatter.strategy ?? 'fixed',
+      ...(frontmatter.enabled !== undefined ? { enabled: frontmatter.enabled !== 'false' } : {}),
       ...(frontmatter.tags ? { tags: String(frontmatter.tags).split(',').map((t) => t.trim()) } : {}),
       content: body.trim(),
     };

@@ -5,6 +5,7 @@ description: Guides the agent to explain concepts or code clearly for developers
 inject: system_prompt
 priority: 20
 strategy: dynamic
+enabled: true
 tags: explain, what, how, why, understand
 ---
 
